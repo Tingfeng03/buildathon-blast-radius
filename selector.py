@@ -24,6 +24,7 @@ def schedule(tests):
     return min(candidates, default=(0, 0, []))[2]
 
 
+''' kinda like detecting which file was changed '''
 def changed_fixtures(patch):
     lines = patch.splitlines()
     paths = []
@@ -102,17 +103,20 @@ def main():
     parser.add_argument("--all-tests", action="store_true")
     args = parser.parse_args()
     data = Path("/data")
+    # load the full test 
     tests = json.loads((data / "tests.json").read_text(encoding="utf-8"))["tests"]
     for test in tests:
         test["ms"] = int((Decimal(str(test["seconds"])) * 1000).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     by_id = {test["id"]: test for test in tests}
     fixtures = load_map(Path("/app/fixture_map.json"), tests)
+    # full test as fallback
     fallback = schedule(tests)
     for patch in sorted((data / "commits").glob("*.patch")):
         try:
             selected = None if args.all_tests else select(patch.read_text(encoding="utf-8"), fixtures, by_id)
         except (OSError, UnicodeError):
             selected = None
+        # use fallback(everything) if no test were selected
         workers = fallback if selected is None else schedule(selected)
         print(json.dumps({"commit": patch.stem, "workers": workers}, separators=(",", ":")))
 

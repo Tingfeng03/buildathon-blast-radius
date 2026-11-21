@@ -1,6 +1,6 @@
 # Blast Radius development roadmap
 
-**Status:** Phase 01 completed and verified. Later phases await review. The [project goals](GOALS.md) define the outcomes and constraints for every phase.
+**Status:** Phases 01 and 02 completed and verified. Phase 03 awaits review. The [project goals](GOALS.md) define the outcomes and constraints for every phase.
 
 ## Architectural decisions
 
@@ -11,7 +11,7 @@
 | Keep selection and scheduling independent. Select once per patch, then evaluate up to eight deterministic longest-test-first assignments in whole milliseconds, including worker overhead. Cache the full-suite assignment for reuse across the batch. | Both narrow selections and full-suite fallbacks can use the same scheduler. The best worker count depends on which tests were selected. |
 | Start with fixture-reader evidence. Narrow a selection only when every change in the patch is eligible and every reader resolves. Otherwise schedule the full suite. | Both investigation probes caught all eight fixture-only failures. Even the broader source-file probe missed failures on three commits. |
 
-**Open decision for phase 02.** The base trace misses optimizer work in spawned processes and can attribute a shared class setting only to the test that first loaded it. Compare subprocess tracing and analysis of imports or shared-attribute readers before deciding which evidence, if any, justifies narrowing source-code changes. Runtime test execution is permitted and would need to earn back its measured CPU cost.
+**Phase 02 result.** The combined candidate uses parent and optimizer worker traces, shared-attribute reads, and static import dependencies for supported edits. It was the only tested candidate with zero misses on both datasets. It improved the median CPU-adjusted sample score from 828.4 to 566.8 seconds and the validation score from 148.0 to 138.6 seconds. Phase 03 can evaluate integration of that candidate with its full-suite fallback. See the [build log](harness/build-log.md).
 
 ## Independently verifiable phases
 
