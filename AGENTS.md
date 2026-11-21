@@ -33,3 +33,16 @@ Create planning and harness files as the work calls for them. Use the build log 
 - Add focused regression tests for behavioral changes where the sample does not cover the case. Useful cases include multi-file and insertion-only diffs, unknown dependency evidence, empty selections, and worker overhead.
 - Run the starter kit's `score.py` against the full sample when selection or scheduling changes. For container changes and submission checks, build and run on Linux AMD64 with the starter's runtime flags. Use `make` or equivalent Docker commands.
 - When reproducing sqlglot test behavior, use the pinned source, starter base image and locked dependencies, and `SKIP_INTEGRATION=0`. Count a failing subtest as a failure of its parent test.
+
+## Developer Understanding
+
+After completing each build phase:
+
+- Summarize the changes and their architectural significance.
+- Identify the primary files and functions introduced or modified.
+- Explain the main execution and data flows.
+- Highlight important design decisions and trade-offs.
+- Identify assumptions or limitations relevant to future phases.
+- Provide a suggested walkthrough order for understanding the implementation.
+
+Keep explanations concise and reference actual repository files and functions. Do not generate extensive documentation unless requested.
