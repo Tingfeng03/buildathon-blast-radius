@@ -1,6 +1,6 @@
 # Blast Radius development roadmap
 
-**Status:** Phases 01 through 03 completed and verified. Phase 04 awaits review. The [project goals](GOALS.md) define the outcomes and constraints for every phase.
+**Status:** Phases 01 through 03 completed and verified. Phase 04 passed local verification for `b3481b4e2ef2c05e588c45a314349526fde4406a`. Submission readiness is pending anonymous access to that commit. See the [build log](harness/build-log.md).
 
 ## Architectural decisions
 

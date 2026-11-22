@@ -63,3 +63,22 @@ The packaged source map is 2,598,683 bytes. Its SHA-256 is `6d9825c25fbb13d1fdd7
 - `python -B harness/run_phase02.py benchmark-integration` passed the three-run median gates on both datasets. The organizer accepted all 12 scored runs. Integrated schedules matched the frozen combined candidate byte for byte. The `--fixture-only` comparison also reproduced the Phase 01 schedules on both datasets. Per-run results are under `.investigation/phase03`.
 - `python -B harness/run_sample.py` scored 565.979 simulated seconds with zero misses. With `--all-tests`, it reproduced 1104.510 simulated seconds with zero misses.
 - See the [runtime walkthrough and map provenance](context/phase-03-integrate-source-selection-context.md). Phase 04 will verify readiness from a clean checkout on a final-sized batch.
+
+## Phase 04 · Verify the submission candidate
+
+**Local checks passed. Public access is pending.** The exact candidate is `b3481b4e2ef2c05e588c45a314349526fde4406a`. The authenticated remote advertises this SHA at `refs/heads/main`. The anonymous API request for the repository returned HTTP 404, and anonymous Git requested authentication with credential helpers disabled. Recheck anonymous access after the repository is public or the same commit is available at a public submission URL.
+
+- `python -B harness/verify_phase04.py --revision b3481b4e2ef2c05e588c45a314349526fde4406a` checked a fresh detached checkout. All nine unit tests passed. Tracked content used 3,170,423 bytes and the checkout including Git metadata used 5,903,991 bytes.
+- The Linux AMD64 cold build took 13.843 s including builder bootstrap. Docker confirmed the four-CPU and 8 GiB builder limits. The image ID is `sha256:7418671c28f19862a86f08ab5ade71ec50d8d95f13706c6550e245bc63d0aaa8`. The image contained only the expected four files in `/app`, and the source-map digest matched Phase 03.
+- All three sample runs, the unwrapped run, and the four-patch validation replay matched the Phase 03 schedules exactly, with zero missed commits. Each sample run cost 565.979 simulated seconds. CPU was 0.700380, 0.710194, and 0.657458 s. The median CPU-adjusted sample score was **566.7 s**.
+
+| Batch | Patches | Maximum observed wall time | Stdout bytes | Peak memory bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Organizer sample | 30 | 1.500 s | 89,537 | 89,317,376 |
+| Independent validation | 4 | 1.203 s | 23,048 | 88,444,928 |
+| Mixed stress | 45 | 1.281 s | 98,862 | 88,633,344 |
+| Full-suite fallback stress | 45 | 1.109 s | 316,890 | 88,481,792 |
+
+Both stress runs passed the output contract, measured resource checks, and known labels. Every fallback row scheduled all numbered tests. These runs reused known patches to measure headroom. Final accuracy on unseen patches remains unmeasured.
+
+Raw evidence is under `.investigation/phase04/8a07bc04fd/`. The first attempt built the image but failed in the measurement wrapper due to its mount path. The corrected rerun produced the recorded results. Repository and commit access checks are recorded in `.investigation/phase04/public-access.json`.
