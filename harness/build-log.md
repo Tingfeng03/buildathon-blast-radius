@@ -149,3 +149,26 @@ The candidate uses statement coverage for bounded guards around existing stateme
 `python -B harness/benchmark_phase07.py` passed all 36 Linux AMD64 runs, with zero missed commits and consistent schedules. The fresh holdout accounts for all 1,620 numbered tests per patch. Its BigQuery default edit broke 18 tests, all of which remained selected after its cost fell from 36.817 s to 14.437 s. The two other holdout edits broke zero tests and together cost 40.354 s under Phase 7.
 
 The 16 independent patches saved 75.999 simulated seconds. Summing each independent batch's median CPU-adjusted score gives 353.728 s for Phase 6 and 277.975 s for Phase 7. The Phase 7 sample median with CPU was 118.722 s. Phase 7 passed local acceptance. The organizer score is pending.
+
+The organizer subsequently scored revision `0f63813b0a47409b31f91fd5961d806a99c848c4` at **462.5 s**. All three runs scheduled 461.168 simulated seconds with zero misses. CPU was 1.34, 1.33, and 1.69 s. The improvement over Phase 6 was 7.609 simulated seconds.
+
+## Phase 08 · Diagnose selection cost
+
+The frozen 12-patch cohort spans test changes, fixtures, dialect configuration, library source, project files, and a mixed change. All twelve diffs passed `git apply --check` on the pinned checkout. The Linux AMD64 suite produced an outcome for each of the 1,620 numbered tests on every patch. The patches were selected to cover these categories. The results do not estimate the organizer's patch mix.
+
+Eight concurrent runs timed out on the parser stress test at the local 120 s cap. The same test passed on the pinned checkout in 43.94 s and on all eight patched revisions in 47.04–78.27 s in serial rechecks. The benchmark audits both sets of reports and preserves the original suite scores. The table uses the outcomes from the serial rechecks for those eight timeouts.
+
+| Batch | Mode | Simulated s | Median CPU s | Missed commits |
+| --- | --- | ---: | ---: | ---: |
+| Diagnostic, 12 patches | Phase 7 | 408.310 | 1.387 | 0 |
+| Diagnostic, 12 patches | File probe | 207.846 | 0.982 | 0 |
+| Public sample, 30 patches | Phase 7 | 117.408 | 1.393 | 0 |
+| Public sample, 30 patches | File probe | 117.408 | 1.641 | 0 |
+
+The diagnostic batch can be scheduled for 6.914 s using only its observed failures, attaining the mathematical lower bound. Phase 7 used the full suite on ten patches. Those fallbacks account for 361.256 s of the 401.396 s gap above the lower bound. Nine passing patches together cost 297.859 s under Phase 7. The file probe reduced six full-suite schedules, saving 200.464 s in total.
+
+Two focused regressions exposed gaps in the probe. The TPC-DS executor test passed on the pinned baseline and failed when the nested SQL fixture changed, but the probe omitted it. The fixture is loaded during class setup and consumed later. A DAX test also passed on the baseline and failed when the shared dialect validator changed in another test file. The probe omitted that test as well. Future fixture evidence needs to account for shared setup, and test-file evidence needs to include imported helpers and their dependents.
+
+- `python -B harness/benchmark_phase08.py` passed the input and output checks in all 12 Linux selector runs. Host and Docker schedules agreed. The official sample scorer accepted both images. The four-worker all-tests sample reference is 1104.510 s.
+- `python -B -m unittest discover -s tests -q` passed all 24 unit tests. `git diff --check` passed. The changes are confined to the diagnostic harness and its documentation.
+- The [Phase 8 walkthrough](context/phase-08-selector-diagnostics-context.md) lists the commands and raw evidence.

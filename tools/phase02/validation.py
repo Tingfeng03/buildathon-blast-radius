@@ -78,7 +78,7 @@ def outcomes(records, by_file):
     return state
 
 
-def label_case(base, sample, output, case):
+def label_case(base, sample, output, case, *, edits=None):
     tests = json.loads((sample / "tests.json").read_text(encoding="utf-8"))["tests"]
     by_file = {}
     numbers = {}
@@ -88,8 +88,9 @@ def label_case(base, sample, output, case):
     with tempfile.TemporaryDirectory() as temporary:
         checkout = Path(temporary) / "checkout"
         shutil.copytree(base, checkout, ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache"))
-        if case != "baseline":
-            path, _, changed = edited_text(base, case)
+        if edits is None:
+            edits = [] if case == "baseline" else [edited_text(base, case)]
+        for path, _, changed in edits:
             (checkout / path).write_text(changed, encoding="utf-8")
         state = run_suite(checkout, output, case, [], by_file)
         missing_files = [path for path, ids in sorted(by_file.items()) if ids.difference(state)]
@@ -111,7 +112,7 @@ def label_case(base, sample, output, case):
     return result
 
 
-def run_suite(checkout, output, tag, targets, by_file):
+def run_suite(checkout, output, tag, targets, by_file, *, test_timeout=120):
     reports = output / f"{tag}-reports.jsonl"
     reports.write_text("", encoding="utf-8")
     with (output / f"{tag}-pytest.log").open("w", encoding="utf-8") as log:
@@ -119,7 +120,8 @@ def run_suite(checkout, output, tag, targets, by_file):
             run = subprocess.run(
                 [sys.executable, __file__, "pytest", str(reports), *(targets or ["tests"])],
                 cwd=checkout, stdout=log, stderr=subprocess.STDOUT, timeout=900,
-                env={**os.environ, "PYTHONPATH": str(checkout), "PYTHONDONTWRITEBYTECODE": "1"},
+                env={**os.environ, "PYTHONPATH": str(checkout), "PYTHONDONTWRITEBYTECODE": "1",
+                     "BLAST_RADIUS_TEST_TIMEOUT": str(test_timeout)},
             )
             # Internal errors and interrupts leave the reporter's partial record usable.
             print(tag, "pytest exit", run.returncode, flush=True)
@@ -143,7 +145,10 @@ def pytest_main(reports, targets):
         def pytest_runtest_logreport(self, report):
             if isinstance(report, SubtestReport) and not report.failed:
                 return
-            self.record({"id": report.nodeid, "phase": report.when, "result": report.outcome})
+            event = {"id": report.nodeid, "phase": report.when, "result": report.outcome}
+            if report.failed and "from pytest-timeout" in str(report.longrepr):
+                event["timeout"] = True
+            self.record(event)
 
         def pytest_collectreport(self, report):
             if report.failed and report.nodeid.endswith(".py"):
@@ -156,7 +161,8 @@ def pytest_main(reports, targets):
 
     return pytest.main(
         ["-q", "-p", "no:cacheprovider", "--continue-on-collection-errors",
-         "--timeout=120", "--timeout-method=signal", *targets], plugins=[Reporter()],
+         "--timeout=" + os.environ.get("BLAST_RADIUS_TEST_TIMEOUT", "120"),
+         "--timeout-method=signal", *targets], plugins=[Reporter()],
     )
 
 

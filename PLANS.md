@@ -1,6 +1,6 @@
 # Blast Radius development roadmap
 
-**Status.** Phase 7 passed local acceptance. The latest organizer result is 470.7 s with zero misses from Phase 6. The target is under 150 seconds including CPU with zero misses. See the [build log](harness/build-log.md).
+**Status.** The latest organizer result is 462.5 s with zero misses from Phase 7. The target is under 150 seconds including CPU with zero misses. See the [build log](harness/build-log.md).
 
 ## Architectural decisions
 
@@ -31,3 +31,5 @@ At each phase boundary, use the [development workflow](AGENTS.md) to agree on sc
 **Phase 06.** Enclosing-callable coverage and mapped configuration or import dependencies replaced seven full-suite fallbacks across nine independent patches. Scheduled time across those patches fell from 308.627 s to 152.805 s, with zero misses. Public sample simulated time stayed at 117.408 s. See the [approved scope and acceptance checks](harness/build/phase-06-narrow-fallbacks.md).
 
 **Phase 07.** Narrowed selections for local sets, guarded statements, and selected definition changes. Across 16 independent patches, scheduled time fell from 349.301 s to 273.302 s with zero misses. Public sample simulated time was 117.408 s. See the [scope and acceptance checks](harness/build/phase-07-costly-selections.md).
+
+**Phase 08.** Full-suite fallbacks accounted for 361.256 s of the 401.396 s above the failing-test lower bound on 12 diagnostic patches. A file-based probe saved 200.464 s on that cohort. Two focused counterexamples exposed missed dependencies through shared fixture setup and imports between test modules. See the [diagnostic plan](harness/build/phase-08-selector-diagnostics.md) and [results](harness/build-log.md#phase-08--diagnose-selection-cost).

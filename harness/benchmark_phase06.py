@@ -50,11 +50,11 @@ def build(context, image):
     subprocess.run(["docker", "build", "--platform", "linux/amd64", "-t", image, str(context)], check=True)
 
 
-def scored_cases(dataset, duration, directory, evidence, fixtures, by_id, skipped=()):
+def scored_cases(dataset, duration, directory, evidence, fixtures, by_id, skipped=(), *, select=select_patch):
     rows = {}
     for path in sorted((directory / "commits").glob("*.patch")):
         reasons = set()
-        picked = select_patch(path.read_text(encoding="utf-8"), fixtures, evidence, by_id, reasons, skipped)
+        picked = select(path.read_text(encoding="utf-8"), fixtures, evidence, by_id, reasons, skipped)
         workers = schedule(by_id.values() if picked is None else picked)
         failing = dataset[path.stem]["failing"]
         selected = {test for worker in workers for test in worker}
