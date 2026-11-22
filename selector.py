@@ -7,10 +7,12 @@ from pathlib import Path
 
 from source_selector import select_source
 from precise_selector import load_precise_map, source_readers
+from shared_selector import FIXTURE_PATH, load_shared_map, test_readers
 
 BASE = "eb11aec4be8cb2122afe713a4816662c3f0fb2fa"
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$")
 HEADER = re.compile(r"^diff --git a/(tests/fixtures/optimizer/[A-Za-z0-9_.-]+\.sql) b/\1$")
+SHARED_FIXTURE_HEADER = re.compile(rf"diff --git a/({FIXTURE_PATH}) b/\1")
 
 
 def schedule(tests):
@@ -27,13 +29,12 @@ def schedule(tests):
     return min(candidates, default=(0, 0, []))[2]
 
 
-''' kinda like detecting which file was changed '''
-def changed_fixtures(patch):
+def changed_fixtures(patch, header_pattern=HEADER):
     lines = patch.splitlines()
     paths = []
     i = 0
     while i < len(lines):
-        match = HEADER.fullmatch(lines[i])
+        match = header_pattern.fullmatch(lines[i])
         if not match:
             return None
         path = match.group(1)
@@ -101,7 +102,7 @@ def select(patch, fixtures, by_id):
     return [by_id[reader] for reader in sorted(readers)]
 
 
-def select_patch(patch, fixtures, source_map, by_id, reasons=None, skipped=()):
+def select_patch(patch, fixtures, source_map, by_id, reasons=None, skipped=(), *, shared=None):
     if source_map is not None and source_map.get("format") == 1:
         readers = set()
         seen = set()
@@ -111,11 +112,19 @@ def select_patch(patch, fixtures, source_map, by_id, reasons=None, skipped=()):
                 if not header or header[1] in seen:
                     return None
                 seen.add(header[1])
-                paths = changed_fixtures(part)
-                if paths:
-                    readers.update(fixtures[paths[0]])
+                path = header[1]
+                if path in fixtures and changed_fixtures(part):
+                    readers.update(fixtures[path])
                     if reasons is not None:
                         reasons.add("fixture readers")
+                elif shared and path in shared["fixtures"] and changed_fixtures(part, SHARED_FIXTURE_HEADER):
+                    readers.update(shared["fixtures"][path])
+                    if reasons is not None:
+                        reasons.add("shared fixture readers")
+                elif shared and path in shared["test_modules"]:
+                    readers.update(test_readers(part, shared["test_modules"]))
+                    if reasons is not None:
+                        reasons.add("test module importers")
                 else:
                     readers.update(source_readers(part, source_map, reasons))
             return [by_id[reader] for reader in sorted(readers.difference(skipped))]
@@ -146,14 +155,16 @@ def main():
     skipped = frozenset(catalogue.get("skipped", ())).difference(by_id)
     fixtures = {} if args.all_tests else load_map(Path("/app/fixture_map.json"), tests)
     source_map = None
+    shared = None
     if not (args.all_tests or args.fixture_only):
         source_map = load_precise_map(Path("/app/precise_map.json.gz"), BASE, by_id)
+        shared = load_shared_map(Path("/app/shared_map.json.gz"), BASE, by_id)
     # full test as fallback
     fallback = schedule(tests)
     for patch in sorted((data / "commits").glob("*.patch")):
         try:
             selected = None if args.all_tests else select_patch(
-                patch.read_text(encoding="utf-8"), fixtures, source_map, by_id, skipped=skipped,
+                patch.read_text(encoding="utf-8"), fixtures, source_map, by_id, skipped=skipped, shared=shared,
             )
         except (OSError, UnicodeError):
             selected = None

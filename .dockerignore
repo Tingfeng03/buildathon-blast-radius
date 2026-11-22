@@ -5,3 +5,5 @@
 !fixture_map.json
 !precise_selector.py
 !precise_map.json.gz
+!shared_selector.py
+!shared_map.json.gz

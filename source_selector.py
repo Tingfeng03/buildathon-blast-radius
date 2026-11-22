@@ -70,7 +70,7 @@ def load_source_map(path, base_commit, by_id):
     return evidence
 
 
-def patched_files(patch, files, *, include_source=False):
+def patched_files(patch, files, *, include_source=False, header_pattern=HEADER):
     """Accept ordinary in-place Git patches and verify them against the base text."""
     lines = patch.split("\n")
     if lines[-1] == "":
@@ -78,7 +78,7 @@ def patched_files(patch, files, *, include_source=False):
     index = 0
     seen = set()
     while index < len(lines):
-        header = HEADER.fullmatch(lines[index])
+        header = header_pattern.fullmatch(lines[index])
         if not header or header[1] not in files or header[1] in seen:
             raise ValueError("Unsupported path")
         path = header[1]

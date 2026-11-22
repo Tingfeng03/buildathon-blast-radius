@@ -172,3 +172,22 @@ Two focused regressions exposed gaps in the probe. The TPC-DS executor test pass
 - `python -B harness/benchmark_phase08.py` passed the input and output checks in all 12 Linux selector runs. Host and Docker schedules agreed. The official sample scorer accepted both images. The four-worker all-tests sample reference is 1104.510 s.
 - `python -B -m unittest discover -s tests -q` passed all 24 unit tests. `git diff --check` passed. The changes are confined to the diagnostic harness and its documentation.
 - The [Phase 8 walkthrough](context/phase-08-selector-diagnostics-context.md) lists the commands and raw evidence.
+
+## Phase 09 · Select tests across shared fixtures and imports
+
+The selector uses the pinned test import graph for supported assertion changes and fixture reads attributed to pytest scopes. The map covers 30 fixture paths and 59 test modules. The previously omitted TPC-DS executor and DAX tests are both selected. Full-suite labeling of the two witness patches found six failing tests in total, and the candidate selected all six. The six new holdout patches had five failing tests, all selected. All 1,620 numbered tests were accounted for on each of the eight patches, with no timeouts.
+
+| Batch | Phase 7 simulated s | Phase 9 simulated s | Phase 7 median CPU s | Phase 9 median CPU s | Missed commits in either |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Public sample | 117.408 | 117.408 | 1.682 | 1.674 | 0 |
+| Phase 8 diagnostics, controlled | 408.310 | 227.704 | 1.055 | 1.128 | 0 |
+| Phase 9 holdout | 220.902 | 77.550 | 0.999 | 1.392 | 0 |
+| Phase 8 witnesses, full-suite labels | 73.634 | 34.680 | 1.124 | 1.294 | 0 |
+
+The five prior independent cohorts retained their Phase 7 simulated costs and zero misses. Each entry uses three restricted Linux AMD64 runs per version. The scorer also accepted the all-tests sample at 1,104.510 s and zero misses. The 45-patch resource replay took 2.969 s of wall time and emitted 5,023 bytes. The pre-log workspace and Git metadata measured 12,334,140 bytes.
+
+- Fixture-only narrowing saved 80.073 s on the Phase 8 diagnostics and 46.177 s on the holdout. Test-import narrowing saved 69.631 s and 62.407 s on test-only patches. The respective mixed patches saved 30.902 s and 34.768 s.
+- The original Phase 8 concurrent-suite labels included eight timeouts. Against those labels, Phase 7 has one missed commit and Phase 9 has six, at 708.310 s and 2,027.704 s simulated. Both have zero misses after the separately recorded isolated controls.
+- A second pinned-suite trace regenerated the 531,493-byte map byte for byte. The no-cache Docker build, the default image command, and all 26 repository unit tests passed. `git diff --check` reported only the usual line-ending conversion notices.
+
+See the [Phase 9 walkthrough](context/phase-09-shared-dependencies-context.md) for the selector flow, evidence limits, and reproduction commands. The paired diagnostic and holdout gains meet the local performance gates. The organizer score depends on the prevalence of supported changes in its batch.
