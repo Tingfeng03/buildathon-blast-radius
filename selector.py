@@ -5,7 +5,8 @@ import re
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
-from source_selector import load_source_map, select_source
+from source_selector import select_source
+from precise_selector import load_precise_map, source_readers
 
 BASE = "eb11aec4be8cb2122afe713a4816662c3f0fb2fa"
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$")
@@ -101,6 +102,23 @@ def select(patch, fixtures, by_id):
 
 
 def select_patch(patch, fixtures, source_map, by_id):
+    if source_map is not None and source_map.get("format") == 1:
+        readers = set()
+        seen = set()
+        try:
+            for part in re.split(r"\n(?=diff --git )", patch):
+                header = re.match(r"diff --git a/([^\n ]+) b/\1\n", part)
+                if not header or header[1] in seen:
+                    return None
+                seen.add(header[1])
+                paths = changed_fixtures(part)
+                if paths:
+                    readers.update(fixtures[paths[0]])
+                else:
+                    readers.update(source_readers(part, source_map))
+            return [by_id[reader] for reader in sorted(readers)]
+        except (KeyError, IndexError, TypeError, ValueError, SyntaxError, OverflowError, RecursionError):
+            return None
     try:
         picked = select(patch, fixtures, by_id)
     except ValueError:
@@ -125,7 +143,7 @@ def main():
     fixtures = {} if args.all_tests else load_map(Path("/app/fixture_map.json"), tests)
     source_map = None
     if not (args.all_tests or args.fixture_only):
-        source_map = load_source_map(Path("/app/source_map.json.gz"), BASE, by_id)
+        source_map = load_precise_map(Path("/app/precise_map.json.gz"), BASE, by_id)
     # full test as fallback
     fallback = schedule(tests)
     for patch in sorted((data / "commits").glob("*.patch")):

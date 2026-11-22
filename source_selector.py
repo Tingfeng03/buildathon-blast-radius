@@ -70,7 +70,7 @@ def load_source_map(path, base_commit, by_id):
     return evidence
 
 
-def patched_files(patch, files):
+def patched_files(patch, files, *, include_source=False):
     """Accept ordinary in-place Git patches and verify them against the base text."""
     lines = patch.split("\n")
     if lines[-1] == "":
@@ -138,8 +138,9 @@ def patched_files(patch, files):
         if not edits:
             raise ValueError("No edits")
         result.extend(original[cursor:])
-        compile("\n".join(result), path, "exec")
-        yield info, edits
+        source = "\n".join(result)
+        compile(source, path, "exec")
+        yield (path, info, source) if include_source else (info, edits)
 
 
 def select_source(patch, evidence, by_id):

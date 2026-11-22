@@ -6,3 +6,4 @@
 /tools/phase02/selector.py text eol=lf
 /tools/phase02/validation.py text eol=lf
 /source_map.json.gz -text
+/precise_map.json.gz -text

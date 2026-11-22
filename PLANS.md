@@ -25,3 +25,5 @@
 | **04 · Verify the submission candidate** | Build the selected version from a clean checkout and exercise it with the organizer's restrictions, including a final-sized batch for resource testing. | Verify repository size, clean build duration, stdout validity and size, and batch wall time. Record three valid sample runs with simulated cost and measured CPU. Identify the exact candidate revision for the team's submission decision. |
 
 At each phase boundary, use the [development workflow](AGENTS.md) to agree on scope and acceptance checks, record observed evidence, and review the outcome before advancing.
+
+**Phase 05.** Local acceptance passed. The precise selector scored 118.666 s including median CPU on the organizer sample and 125.382 s on the independent validation batch, with zero misses in all six measured runs. The organizer reported 858.131 simulated seconds and zero misses for the previous submission. The new candidate needs an organizer result to verify the under-150-second goal. See the [Phase 05 build log](harness/build-log.md#phase-05--narrow-source-and-mixed-file-selections).

@@ -3,4 +3,5 @@
 !selector.py
 !source_selector.py
 !fixture_map.json
-!source_map.json.gz
+!precise_selector.py
+!precise_map.json.gz

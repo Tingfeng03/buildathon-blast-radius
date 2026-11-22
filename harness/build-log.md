@@ -82,3 +82,22 @@ The packaged source map is 2,598,683 bytes. Its SHA-256 is `6d9825c25fbb13d1fdd7
 Both stress runs passed the output contract, measured resource checks, and known labels. Every fallback row scheduled all numbered tests. These runs reused known patches to measure headroom. Final accuracy on unseen patches remains unmeasured.
 
 Raw evidence is under `.investigation/phase04/8a07bc04fd/`. The first attempt built the image but failed in the measurement wrapper due to its mount path. The corrected rerun produced the recorded results. Repository and commit access checks are recorded in `.investigation/phase04/public-access.json`.
+
+## Phase 05 · Narrow source and mixed-file selections
+
+The organizer reported 858.131 simulated seconds and zero misses on the submitted build, with 0.58 s median CPU. On the local sample, 12 full-suite runs accounted for 441.804 of Phase 03's 565.979 simulated seconds. The scheduler already attained the cost lower bound for every selected set.
+
+The candidate verifies Python hunks against pinned text and compares syntax trees to distinguish source-only edits from executable changes. It uses base line and class evidence, including both process pools, and unions the resulting readers with those of changed fixtures. Unresolved changes use the full suite.
+
+| Dataset and selector | Simulated seconds | Median CPU seconds | Median total seconds | Missed commits |
+| --- | ---: | ---: | ---: | ---: |
+| Sample, four-worker all-tests reference | 1104.510 | — | — | 0 |
+| Sample, Phase 03 | 565.979 | 0.760 | 566.739 | 0 |
+| Sample, Phase 05 | 117.408 | 1.258 | 118.666 | 0 |
+| Independent validation, Phase 03 | 137.905 | 0.621 | 138.526 | 0 |
+| Independent validation, Phase 05 | 124.542 | 0.840 | 125.382 | 0 |
+
+- `python -B -m unittest discover -s tests -q` passed 16 tests. `git diff --check` passed.
+- `python -B harness/run_sample.py` scored the packaged Linux AMD64 default entry point at 117.408 simulated seconds with zero misses. `python -B harness/benchmark_phase05.py` passed three runs per dataset under the competition runtime limits. Sample CPU was 1.257515, 1.371700 and 1.201638 s. Validation CPU was 0.824073, 0.871034 and 0.840481 s. Raw schedules are under `.investigation/phase05/`.
+- The initial class profiler collided with sqlglot's `instance` keyword. With a positional-only receiver, the full profile passed 1,620 tests and 25,440 subtests with one skip. An executor task can return before running a sqlglot line. The corrected executor collector verifies task entry separately from line coverage and passed 60 tests and 426 subtests.
+- The packaged map is 1,387,677 bytes. `python -B tools/build_precise_map.py` regenerated the same SHA-256 from the saved traces. All three schedules were byte-identical within each dataset. See the [walkthrough and reproduction commands](context/phase-05-precise-selection-context.md). Local acceptance passed. The organizer score for this candidate remains pending.

@@ -12,6 +12,8 @@ Build a Dockerized selector that gives each independent sqlglot patch a low-cost
 
 On the supplied 30 patches, running all tests with four workers costs **1104.510 simulated seconds with zero misses**. Selecting readers of known optimizer fixtures and using the full suite elsewhere gives a phase 01 target of **827.874 seconds with zero misses**. The local scorer validated both sets of investigation outputs. These figures exclude selector CPU. The competition brief separately lists **1614.1 seconds** as its starter baseline.
 
+The current competitive target is **under 150 seconds including selector CPU, with zero missed commits** on the organizer batch. The submitted baseline had a median total of 858.7 seconds. Use the labeled sample and independent patches for local acceptance.
+
 ## Technical constraints
 
 - Every patch targets sqlglot commit `eb11aec4be8cb2122afe713a4816662c3f0fb2fa`. Read patches and the numbered test catalogue from `/data`. Use each selected test at most once per patch, across up to eight workers. Send logs to stderr and keep stdout within 2 MB.
