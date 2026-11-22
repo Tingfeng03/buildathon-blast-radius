@@ -8,9 +8,11 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 sample = root / "blast-radius-sample" / "sample"
 parser = argparse.ArgumentParser()
-parser.add_argument("--all-tests", action="store_true")
+modes = parser.add_mutually_exclusive_group()
+modes.add_argument("--all-tests", action="store_true")
+modes.add_argument("--fixture-only", action="store_true")
 args = parser.parse_args()
-image = "blast-radius-phase01"
+image = "blast-radius-sample-run"
 subprocess.run(["docker", "build", "--platform", "linux/amd64", "-t", image, str(root)], check=True)
 command = [
     "docker", "run", "--rm", "--platform", "linux/amd64", "--network", "none",
@@ -22,8 +24,9 @@ command = [
     "--volume", f"{sample / 'tests.json'}:/data/tests.json:ro",
     image,
 ]
-if args.all_tests:
-    command.extend(["python", "/app/selector.py", "--all-tests"])
+if args.all_tests or args.fixture_only:
+    flag = "--all-tests" if args.all_tests else "--fixture-only"
+    command.extend(["python", "/app/selector.py", flag])
 with tempfile.TemporaryDirectory() as directory:
     output = Path(directory) / "output.jsonl"
     with output.open("wb") as stream:

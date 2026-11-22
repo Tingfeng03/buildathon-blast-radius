@@ -1,6 +1,6 @@
-.investigation
-blast-radius-sample
-harness
-tests
-tools
-*.md
+*
+!Dockerfile
+!selector.py
+!source_selector.py
+!fixture_map.json
+!source_map.json.gz

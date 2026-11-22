@@ -5,6 +5,8 @@ import re
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
+from source_selector import load_source_map, select_source
+
 BASE = "eb11aec4be8cb2122afe713a4816662c3f0fb2fa"
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$")
 HEADER = re.compile(r"^diff --git a/(tests/fixtures/optimizer/[A-Za-z0-9_.-]+\.sql) b/\1$")
@@ -98,22 +100,39 @@ def select(patch, fixtures, by_id):
     return [by_id[reader] for reader in sorted(readers)]
 
 
+def select_patch(patch, fixtures, source_map, by_id):
+    try:
+        picked = select(patch, fixtures, by_id)
+    except ValueError:
+        return None
+    if picked is None and source_map is not None:
+        picked = select_source(patch, source_map, by_id)
+    return picked
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--all-tests", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--all-tests", action="store_true")
+    modes.add_argument("--fixture-only", action="store_true")
     args = parser.parse_args()
     data = Path("/data")
-    # load the full test 
+    # Load the complete catalogue.
     tests = json.loads((data / "tests.json").read_text(encoding="utf-8"))["tests"]
     for test in tests:
         test["ms"] = int((Decimal(str(test["seconds"])) * 1000).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     by_id = {test["id"]: test for test in tests}
-    fixtures = load_map(Path("/app/fixture_map.json"), tests)
+    fixtures = {} if args.all_tests else load_map(Path("/app/fixture_map.json"), tests)
+    source_map = None
+    if not (args.all_tests or args.fixture_only):
+        source_map = load_source_map(Path("/app/source_map.json.gz"), BASE, by_id)
     # full test as fallback
     fallback = schedule(tests)
     for patch in sorted((data / "commits").glob("*.patch")):
         try:
-            selected = None if args.all_tests else select(patch.read_text(encoding="utf-8"), fixtures, by_id)
+            selected = None if args.all_tests else select_patch(
+                patch.read_text(encoding="utf-8"), fixtures, source_map, by_id,
+            )
         except (OSError, UnicodeError):
             selected = None
         # use fallback(everything) if no test were selected

@@ -1,0 +1,8 @@
+# Preserve the byte-level fingerprints from the frozen Phase 02 comparison.
+/fixture_map.json text eol=crlf
+/harness/build/phase-02-source-dependencies.md text eol=lf
+/tools/phase02/candidate.py text eol=lf
+/tools/phase02/evidence.py text eol=lf
+/tools/phase02/selector.py text eol=lf
+/tools/phase02/validation.py text eol=lf
+/source_map.json.gz -text

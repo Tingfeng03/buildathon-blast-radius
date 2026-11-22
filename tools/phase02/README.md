@@ -24,4 +24,6 @@ Reuse `.investigation/dependencies.json.gz` from the original investigation when
 
 If validation is interrupted after a clean baseline, stop any still-running analysis for those cases, then run `python -B harness/run_phase02.py resume-labels`. It reuses observed reports and retries unresolved files sequentially.
 
-The benchmark uses the Phase 01 image for every mode and mounts experiment code and maps read-only. It reads the private Linux cgroup CPU counter after the selector exits. The counter includes the shared measurement wrapper up to that read. The organizer's scorer runs on the host. Raw traces, labels, schedules, and reports live under `.investigation/phase02`.
+Each benchmark uses the same pinned runtime image for every compared mode and mounts experiment code and maps read-only. It reads the private Linux cgroup CPU counter after the selector exits. The counter includes the shared measurement wrapper up to that read. The organizer's scorer runs on the host. Raw traces, labels, schedules, and reports live under `.investigation/phase02`.
+
+The archived `tools/phase02/selector.py` supplies the frozen Phase 01 behavior for historical replays. The mounted experiment uses it even when the root image contains the integrated selector. Use `python -B harness/run_phase02.py benchmark-integration` for matched Phase 03 comparisons and schedule parity. It writes reports under `.investigation/phase03`.

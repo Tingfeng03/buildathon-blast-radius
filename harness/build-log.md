@@ -45,3 +45,21 @@ Initial concurrent pytest runs were killed before all outcomes were recorded. Se
 - Six focused tests passed with `python -B -m unittest discover -s tests -v`.
 - The organizer's scorer accepted all 30 container runs across five modes, two datasets, and three repetitions. The validation report is in `.investigation/phase02/benchmark-validation.json`. The acceptance gate selected `imports` in `.investigation/phase02/decision.json`.
 - See the [reproduction commands](../tools/phase02/README.md) and [walkthrough](context/phase-02-source-dependencies-context.md).
+
+## Phase 03 · Integrate the verified source selector
+
+The submission image now uses fixture selection, then the verified source rules, then the cached full-suite schedule. It ships only the runtime modules and the two maps. It uses the same output contract and scheduler. Unavailable or incompatible source evidence leaves fixture selection available and causes source edits to use the full suite.
+
+The packaged source map is 2,598,683 bytes. Its SHA-256 is `6d9825c25fbb13d1fdd7fcf2a60e49c910c058d4691aaffe66b9d9b6360ccae5`, matching the frozen Phase 02 artifact. Historical fingerprints still match, including the byte-for-byte archived Phase 01 selector.
+
+| Dataset | Mode | Simulated seconds | Median CPU seconds | Median total (s) | Missed commits |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Organizer sample | Phase 01 | 827.874 | 0.439 | 828.3 | 0 |
+| Organizer sample | Integrated | 565.979 | 0.760 | 566.7 | 0 |
+| Independent validation | Phase 01 | 147.268 | 0.455 | 147.7 | 0 |
+| Independent validation | Integrated | 137.905 | 0.621 | 138.5 | 0 |
+
+- `python -B -m unittest discover -s tests -v` passed all nine tests.
+- `python -B harness/run_phase02.py benchmark-integration` passed the three-run median gates on both datasets. The organizer accepted all 12 scored runs. Integrated schedules matched the frozen combined candidate byte for byte. The `--fixture-only` comparison also reproduced the Phase 01 schedules on both datasets. Per-run results are under `.investigation/phase03`.
+- `python -B harness/run_sample.py` scored 565.979 simulated seconds with zero misses. With `--all-tests`, it reproduced 1104.510 simulated seconds with zero misses.
+- See the [runtime walkthrough and map provenance](context/phase-03-integrate-source-selection-context.md). Phase 04 will verify readiness from a clean checkout on a final-sized batch.

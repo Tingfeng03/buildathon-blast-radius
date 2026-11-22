@@ -20,6 +20,7 @@ TOOLS = ROOT / "tools" / "phase02"
 ANALYSIS = "blast-radius-analysis-phase02"
 IMAGE = "blast-radius-phase02-benchmark"
 BASE_COMMIT = "eb11aec4be8cb2122afe713a4816662c3f0fb2fa"
+INTEGRATED_MAP_SHA256 = "6d9825c25fbb13d1fdd7fcf2a60e49c910c058d4691aaffe66b9d9b6360ccae5"
 
 sys.path.insert(0, str(TOOLS))
 sys.path.insert(1, str(ROOT))
@@ -42,9 +43,12 @@ def check_base():
 
 
 def fingerprint():
-    paths = [ROOT / "harness/build/phase-02-source-dependencies.md", ROOT / "selector.py",
-             ROOT / "fixture_map.json", *[TOOLS / f"{name}.py" for name in ("candidate", "evidence", "validation")]]
-    return {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    paths = {path: ROOT / path for path in (
+        "harness/build/phase-02-source-dependencies.md", "fixture_map.json",
+        "tools/phase02/candidate.py", "tools/phase02/evidence.py", "tools/phase02/validation.py",
+    )}
+    paths["selector.py"] = TOOLS / "selector.py"
+    return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()}
 
 
 def freeze():
@@ -135,7 +139,7 @@ def scorer():
     return module
 
 
-def run_mode(mode, commits):
+def run_mode(mode, commits, image=IMAGE):
     command = [
         "docker", "run", "--rm", "--platform", "linux/amd64", "--network", "none",
         "--cgroupns", "private", "--cpus", "2", "--memory", "4096m", "--memory-swap", "4096m",
@@ -145,10 +149,16 @@ def run_mode(mode, commits):
         "--volume", f"{commits}:/data/commits:ro", "--volume", f"{SAMPLE / 'tests.json'}:/data/tests.json:ro",
         "--volume", f"{TOOLS}:/phase02:ro",
     ]
-    if mode != "phase01":
+    entry_points = {
+        "phase01": ["/phase02/selector.py"],
+        "integrated": ["/app/selector.py"],
+        "fixture-only": ["/app/selector.py", "--fixture-only"],
+    }
+    entry = entry_points.get(mode)
+    if entry is None:
         command.extend(["--volume", f"{OUTPUT / 'workers' / (mode + '.json.gz')}:/evidence.json.gz:ro"])
-    command.extend([IMAGE, "python", "/phase02/measure_cpu.py", "python"])
-    command.extend(["/app/selector.py"] if mode == "phase01" else ["/phase02/candidate.py", "/evidence.json.gz"])
+        entry = ["/phase02/candidate.py", "/evidence.json.gz"]
+    command.extend([image, "python", "/phase02/measure_cpu.py", "python", *entry])
     result = subprocess.run(command, capture_output=True, timeout=180)
     if result.returncode:
         raise RuntimeError(result.stderr.decode(errors="replace"))
@@ -229,8 +239,16 @@ def diagnose():
     print(json.dumps(report, indent=2))
 
 
-def benchmark(dataset="both"):
+def benchmark(dataset="both", integration=False):
     require_frozen()
+    target = SCRATCH / "phase03" if integration else OUTPUT
+    modes = ("phase01", "integrated") if integration else MODES
+    image = "blast-radius-phase03-benchmark" if integration else IMAGE
+    if integration:
+        source_hash = hashlib.sha256((ROOT / "source_map.json.gz").read_bytes()).hexdigest()
+        if source_hash != INTEGRATED_MAP_SHA256:
+            raise SystemExit("The packaged map differs from the verified Phase 02 artifact")
+        target.mkdir(parents=True, exist_ok=True)
     score = scorer()
     tests = load_json(SAMPLE / "tests.json")["tests"]
     nodeids = {test["number"]: test["id"] for test in tests}
@@ -244,17 +262,29 @@ def benchmark(dataset="both"):
         }
         audit_labels(tests, answers)
         datasets["validation"] = (VALIDATION / "commits", answers)
-    subprocess.run(["docker", "build", "--platform", "linux/amd64", "-t", IMAGE, str(ROOT)], check=True)
+    subprocess.run(["docker", "build", "--platform", "linux/amd64", "-t", image, str(ROOT)], check=True)
     for dataset, (commits, answers) in datasets.items():
         complete = all(record.get("complete", True) for record in answers.values())
-        runs = {mode: [] for mode in MODES}
+        if integration:
+            if not complete:
+                raise RuntimeError(f"{dataset} labels are incomplete")
+            expected = {
+                "phase01": (OUTPUT / f"{dataset}-phase01-1.jsonl").read_bytes(),
+                "integrated": (OUTPUT / f"{dataset}-imports-1.jsonl").read_bytes(),
+            }
+            fixture, _ = run_mode("fixture-only", commits, image)
+            if fixture != expected["phase01"]:
+                raise RuntimeError(f"{dataset} fixture-only schedules differ from Phase 01")
+        runs = {mode: [] for mode in modes}
         for repeat in range(3):
-            for mode in MODES:
-                stdout, cpu = run_mode(mode, commits)
+            for mode in modes:
+                stdout, cpu = run_mode(mode, commits, image)
                 evaluation = score.evaluate_run(stdout, tests, answers)
                 if not evaluation["ok"]:
                     raise RuntimeError(f"Organizer rejected {dataset}/{mode}: {evaluation}")
-                (OUTPUT / f"{dataset}-{mode}-{repeat + 1}.jsonl").write_bytes(stdout)
+                (target / f"{dataset}-{mode}-{repeat + 1}.jsonl").write_bytes(stdout)
+                if integration and (stdout != expected[mode] or evaluation["missed_commits"]):
+                    raise RuntimeError(f"{dataset}/{mode} failed schedule parity or missed a commit")
                 selection = {row["commit"]: {n for worker in row["workers"] for n in worker}
                              for row in map(json.loads, stdout.splitlines())}
                 misses = evaluation["missed_commits"]
@@ -273,7 +303,9 @@ def benchmark(dataset="both"):
             rounded = ((median_us + 50_000) // 100_000) / 10
             summary["modes"][mode] = {"runs": records, "median_us": median_us, "score": rounded}
             print(dataset, mode, "score", rounded, "known missed commits", records[0]["missed_commits"], flush=True)
-        (OUTPUT / f"benchmark-{dataset}.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        (target / f"benchmark-{dataset}.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        if integration and summary["modes"]["integrated"]["score"] >= summary["modes"]["phase01"]["score"]:
+            raise RuntimeError(f"Integrated selector did not improve the CPU-adjusted {dataset} score")
 
 
 def decision():
@@ -298,12 +330,13 @@ def decision():
 if __name__ == "__main__":
     commands = {"freeze": freeze, "collect": collect, "collect-parent": collect_parent,
                 "maps": rebuild_maps, "label": labels, "resume-labels": resume_labels,
-                "benchmark": benchmark, "diagnose": diagnose, "decision": decision}
+                "benchmark": benchmark, "benchmark-integration": benchmark,
+                "diagnose": diagnose, "decision": decision}
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=commands)
     parser.add_argument("--dataset", choices=("both", "sample", "validation"), default="both")
     args = parser.parse_args()
-    if args.command == "benchmark":
-        benchmark(args.dataset)
+    if args.command in ("benchmark", "benchmark-integration"):
+        benchmark(args.dataset, integration=args.command == "benchmark-integration")
     else:
         commands[args.command]()

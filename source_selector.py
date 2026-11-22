@@ -5,11 +5,69 @@ import json
 import re
 import zlib
 
-HEADER = re.compile(r"diff --git a/(sqlglot/[\w./-]+\.py) b/\1", re.ASCII)
+SOURCE_PATH = r"sqlglot/[\w./-]+\.py"
+HEADER = re.compile(rf"diff --git a/({SOURCE_PATH}) b/\1", re.ASCII)
 INDEX = re.compile(r"index [0-9a-f]+\.\.[0-9a-f]+(?: 100644)?")
 HUNK = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@.*", re.ASCII)
 UNSAFE = re.compile(r"^\s*(?:@|(?:async\s+)?def\s|class\s|from\s|import\s|global\s|nonlocal\s)|\b(?:__import__|importlib)\b")
 SETTING = re.compile(r"\s*([A-Z][A-Z0-9_]+)\s*=\s*[\w.+'\" -]+")
+
+
+def valid_readers(readers, reference_ids):
+    return isinstance(readers, list) and all(
+        isinstance(reader, str) and reader in reference_ids for reader in readers
+    )
+
+
+def valid_file(info, reference_ids):
+    if not isinstance(info, dict) or not isinstance(info.get("source"), str):
+        return False
+    functions = info.get("functions")
+    settings = info.get("settings", {})
+    if not isinstance(functions, list) or not isinstance(settings, dict):
+        return False
+    for function in functions:
+        if not isinstance(function, list) or len(function) != 4:
+            return False
+        start, end, indent, readers = function
+        if not (
+            all(type(value) is int for value in (start, end, indent))
+            and 1 <= start <= end and indent > 0
+            and valid_readers(readers, reference_ids)
+        ):
+            return False
+    for line, setting in settings.items():
+        if not (
+            line.isascii() and line.isdecimal() and not line.startswith("0")
+            and isinstance(setting, list) and len(setting) == 2
+            and isinstance(setting[0], str) and valid_readers(setting[1], reference_ids)
+        ):
+            return False
+    return valid_readers(info.get("importers", []), reference_ids)
+
+
+def load_source_map(path, base_commit, by_id):
+    """Disable source selection when the packaged evidence cannot be trusted."""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as stream:
+            evidence = json.load(stream)
+    except (OSError, EOFError, ValueError, RecursionError, zlib.error):
+        return None
+    if not isinstance(evidence, dict) or evidence.get("base_commit") != base_commit:
+        return None
+    references = evidence.get("reference_ids")
+    if not isinstance(references, list) or not all(isinstance(item, str) for item in references):
+        return None
+    reference_ids = set(references)
+    files = evidence.get("files")
+    if not isinstance(files, dict) or not reference_ids.issuperset(by_id):
+        return None
+    if not all(
+        re.fullmatch(SOURCE_PATH, path, re.ASCII) and valid_file(info, reference_ids)
+        for path, info in files.items()
+    ):
+        return None
+    return evidence
 
 
 def patched_files(patch, files):
@@ -96,7 +154,7 @@ def select_source(patch, evidence, by_id):
                     return None
                 readers.update(change_readers)
             readers.update(info.get("importers", ()))
-    except (IndexError, ValueError, SyntaxError, OverflowError):
+    except (IndexError, ValueError, SyntaxError, OverflowError, RecursionError):
         return None
     if not readers or not readers.issubset(by_id):
         return None
