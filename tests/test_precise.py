@@ -17,10 +17,11 @@ class PreciseTests(unittest.TestCase):
             before.splitlines(True), after.splitlines(True), "a/" + path, "b/" + path,
         ))
 
-    def select(self, before, after, extra="", readers=0, lines=None, structural=False, importers=None):
+    def select(self, before, after, extra="", readers=0, lines=None, structural=False, importers=None,
+               binding_edits=False, membership=None, skipped=()):
         ids = ["source", "fixture", "reads-text"]
         evidence = {
-            "format": 1, "structural": structural, "ids": ids,
+            "format": 1, "structural": structural, "binding_edits": binding_edits, "ids": ids,
             "groups": [[], [0], [2], [-1, 0]], "sites": {},
             "files": {self.path: {
                 "source": before, "readers": readers, "lines": lines or {"2": 1},
@@ -28,8 +29,31 @@ class PreciseTests(unittest.TestCase):
         }
         if importers is not None:
             evidence["files"][self.path]["importers"] = importers
+        if membership is not None:
+            evidence["files"][self.path]["membership"] = membership
         return select_patch(self.patch(before, after) + extra, {self.fixture: ["fixture"]},
-                            evidence, {i: i for i in ids})
+                            evidence, {i: i for i in ids if i not in skipped}, skipped=skipped)
+
+    def test_constant_default_and_inert_added_binding_use_module_evidence(self):
+        before = "def run(value=1):\n    return value\n"
+        options = {"structural": True, "binding_edits": True, "importers": 1}
+        self.assertEqual(self.select(before, before.replace("=1", "=2"), **options), ["source"])
+        self.assertIsNone(self.select(before, before.replace("=1", "=factory()"), **options))
+        self.assertEqual(self.select(before, before + "\ndef _helper():\n    pass\n", **options), ["source"])
+        self.assertIsNone(self.select(before, before + "\n@factory()\ndef _helper():\n    pass\n", **options))
+        self.assertEqual(self.select(before, before.replace("=1", "=2"), skipped=("source",), **options), [])
+
+    def test_membership_removal_uses_readers_but_replacements_use_importers(self):
+        before = "ITEMS = {1, 2}\n"
+        options = {"structural": True, "importers": 2, "membership": {"ITEMS": 1}}
+        self.assertEqual(self.select(before, "ITEMS = {1}\n", **options), ["source"])
+        self.assertEqual(self.select(before, "ITEMS = {1, 3}\n", **options), ["reads-text"])
+
+    def test_guarded_statement_uses_original_statement_readers(self):
+        before = "def run(x):\n    if x:\n        return 1\n    return 0\n"
+        after = before.replace("        return 1", "        if x == 1:\n            return 1")
+        self.assertEqual(self.select(before, after, lines={"2": 2, "3": 1, "4": 2},
+                                     structural=True, binding_edits=True), ["source"])
 
     def test_mixed_patch_union_and_unknown_operation(self):
         before = "def run():\n    return 1\n"

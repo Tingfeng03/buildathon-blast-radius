@@ -36,7 +36,10 @@ def load_precise_map(path, base, by_id):
             if not (isinstance(info, dict) and isinstance(info["source"], str)
                     and isinstance(info["lines"], dict) and valid_index(info["readers"])
                     and all(valid_index(i) for i in info["lines"].values())
-                    and all(valid_index(info[key]) for key in ("pool", "importers") if key in info)):
+                    and all(valid_index(info[key]) for key in
+                            ("pool", "importers", "binding_importers") if key in info)
+                    and isinstance(info.get("membership", {}), dict)
+                    and all(valid_index(i) for i in info.get("membership", {}).values())):
                 return None
         return evidence
     except (KeyError, TypeError, OSError, EOFError, ValueError, RecursionError, zlib.error):
@@ -116,7 +119,21 @@ def identity_readers(old, new, path, evidence, reached):
     return (reached - observed) | uncertain
 
 
-def executable_changes(old, new):
+def guarded_statement(old, new):
+    if not (isinstance(old, (ast.Expr, ast.Return)) and isinstance(new, ast.If)
+            and len(new.body) == 1 and not new.orelse and same(old, new.body[0])):
+        return False
+    if isinstance(old, ast.Expr) and isinstance(old.value, ast.Constant):
+        return False
+    test = new.test
+    return (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name)
+            and not test.left.id.startswith("__")
+            and len(test.ops) == 1 and isinstance(test.ops[0], (ast.Eq, ast.NotEq))
+            and isinstance(test.comparators[0], ast.Constant)
+            and type(test.comparators[0].value) in (int, str, bool))
+
+
+def executable_changes(old, new, binding_edits=False):
     """Find outer expressions, keeping the entry to a short-circuit expression."""
     if same(old, new):
         return
@@ -125,14 +142,17 @@ def executable_changes(old, new):
                for n in ast.walk(new)) and type(old) is not type(new):
             raise Unknown
         yield old, new
+    elif binding_edits and guarded_statement(old, new):
+        # The condition only runs when execution reaches the original statement.
+        yield old, new.test
     elif isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
         for a, b in zip(old, new):
-            yield from executable_changes(a, b)
+            yield from executable_changes(a, b, binding_edits)
     elif isinstance(old, ast.stmt) and type(old) is type(new):
         if isinstance(old, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not all(same(getattr(old, f), getattr(new, f)) for f in old._fields if f != "body"):
                 raise Unknown
-            yield from executable_changes(old.body, new.body)
+            yield from executable_changes(old.body, new.body, binding_edits)
             return
         if isinstance(old, (ast.ClassDef, ast.Import, ast.ImportFrom, ast.Global, ast.Nonlocal)):
             raise Unknown
@@ -140,7 +160,7 @@ def executable_changes(old, new):
             a, b = getattr(old, field), getattr(new, field)
             if field in ("targets", "target", "name", "optional_vars") and not same(a, b):
                 raise Unknown
-            yield from executable_changes(a, b)
+            yield from executable_changes(a, b, binding_edits)
     else:
         raise Unknown
 
@@ -167,7 +187,7 @@ def body_readers(fn, new, path, info, evidence):
         if "pool" in info:
             readers.update(groups(evidence, info["pool"]))
         return readers
-    for old, changed in executable_changes(fn.body, new.body):
+    for old, changed in executable_changes(fn.body, new.body, evidence.get("binding_edits")):
         reached = point(info, evidence, old.lineno)
         # Coverage can credit a multiline expression to its constituent lines.
         for line in range(old.lineno + 1, old.end_lineno + 1):
@@ -273,10 +293,10 @@ def class_setting(old, new, owner, info, evidence):
     return named | (instances if -1 in direct else direct)
 
 
-def module_readers(info, evidence):
-    if "importers" not in info:
+def module_readers(info, evidence, key="importers"):
+    if key not in info:
         raise Unknown("No bounded import evidence for module")
-    return groups(evidence, info["importers"])
+    return groups(evidence, info[key])
 
 
 def assignment_name(old, new):
@@ -327,8 +347,18 @@ def data_edit(old, new):
     return passive_data(old) and passive_data(new)
 
 
+def membership_removal(old, new):
+    if not (isinstance(old, ast.Set) and isinstance(new, ast.Set)):
+        return False
+    return all(not after for _, after in changed_sequences(old.elts, new.elts, ast.dump))
+
+
 def configuration_readers(old, new, owner, info, evidence):
     name = assignment_name(old, new)
+    membership = info.get("membership", {}).get(name) if owner is None else None
+    if (membership is not None and membership_removal(old.value, new.value)
+            and all(passive_data(value) for value in old.value.elts)):
+        return groups(evidence, membership)
     enum = enum_member(old.value, info)
     if owner and enum and enum_member(new.value, info) == enum:
         observed = evidence["classes"].get(owner)
@@ -356,8 +386,69 @@ def import_edit(old, new):
                for node in before + after)
 
 
+def introduced_bindings(old, new, owner):
+    """Align unchanged definitions around added, inert bindings."""
+    changes = changed_sequences(old, new, ast.dump)
+    bound = set()
+    for stmt in old:
+        if isinstance(stmt, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            bound.add(stmt.name)
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name):
+                bound.add(node.id)
+            elif isinstance(node, ast.alias):
+                bound.add(node.asname or node.name.split(".")[0])
+    for before, after in changes:
+        if before:
+            return False
+        for node in after:
+            if (owner is None and isinstance(node, ast.FunctionDef)
+                    and not (node.decorator_list or node.returns or node.args.defaults
+                             or any(node.args.kw_defaults) or getattr(node, "type_params", ()))
+                    and all(arg.annotation is None for arg in ast.walk(node.args)
+                            if isinstance(arg, ast.arg))):
+                name = node.name
+                if not name.startswith("_") or name.startswith("__"):
+                    return False
+            elif (owner is not None and isinstance(node, ast.Assign) and len(node.targets) == 1
+                  and isinstance(node.targets[0], ast.Name) and node.targets[0].id.isupper()
+                  and isinstance(node.value, ast.Constant)):
+                name = node.targets[0].id
+            else:
+                return False
+            if name in bound:
+                return False
+            bound.add(name)
+    return bool(changes)
+
+
+def constant_default_edit(old, new):
+    if old.decorator_list or not same(old.body, new.body):
+        return False
+    if not all(same(getattr(old, field), getattr(new, field))
+               for field in old._fields if field != "args"):
+        return False
+    if not all(same(getattr(old.args, field), getattr(new.args, field))
+               for field in old.args._fields if field not in ("defaults", "kw_defaults")):
+        return False
+    for before, after in ((old.args.defaults, new.args.defaults),
+                          (old.args.kw_defaults, new.args.kw_defaults)):
+        if len(before) != len(after):
+            return False
+        if any(not same(a, b) and not (isinstance(a, ast.Constant)
+                                       and isinstance(b, ast.Constant)
+                                       and type(a.value) is type(b.value))
+               for a, b in zip(before, after)):
+            return False
+    return True
+
+
 def definitions(old, new, path, info, evidence, reasons, owner=None):
+    binding_key = "binding_importers" if "binding_importers" in info else "importers"
     if len(old) != len(new):
+        if evidence.get("binding_edits") and introduced_bindings(old, new, owner):
+            reasons.add("definition dependencies")
+            return module_readers(info, evidence, binding_key)
         raise Unknown
     readers = set()
     for a, b in zip(old, new):
@@ -365,6 +456,18 @@ def definitions(old, new, path, info, evidence, reasons, owner=None):
             continue
         if type(a) is type(b) and isinstance(a, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             if not all(same(getattr(a, f), getattr(b, f)) for f in a._fields if f != "body"):
+                if (evidence.get("binding_edits") and isinstance(a, ast.FunctionDef)
+                        and constant_default_edit(a, b)):
+                    if owner is None and binding_key == "binding_importers":
+                        # The pinned optimizer dispatches rules by parameter name.
+                        try:
+                            readers.update(callable_readers(a, b, info, evidence))
+                        except Unknown:
+                            readers.update(module_readers(info, evidence, binding_key))
+                    else:
+                        readers.update(module_readers(info, evidence, binding_key))
+                    reasons.add("default argument dependencies")
+                    continue
                 raise Unknown
             if isinstance(a, ast.ClassDef):
                 module = path.removesuffix(".py").replace("/", ".").removesuffix(".__init__")

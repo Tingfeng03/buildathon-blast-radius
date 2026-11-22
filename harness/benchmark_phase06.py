@@ -38,23 +38,23 @@ def check_candidate(freeze=False):
         raise ValueError("Freeze the unchanged candidate before opening the holdout labels")
 
 
-def build_baseline():
-    archive = subprocess.check_output(["git", "archive", BASELINE, *RUNTIME_FILES], cwd=ROOT)
-    with TemporaryDirectory(dir=OUTPUT) as directory:
+def build_baseline(revision=BASELINE, image=BASELINE_IMAGE, output=OUTPUT):
+    archive = subprocess.check_output(["git", "archive", revision, *RUNTIME_FILES], cwd=ROOT)
+    with TemporaryDirectory(dir=output) as directory:
         with tarfile.open(fileobj=io.BytesIO(archive)) as stream:
             stream.extractall(directory, filter="data")
-        build(directory, BASELINE_IMAGE)
+        build(directory, image)
 
 
 def build(context, image):
     subprocess.run(["docker", "build", "--platform", "linux/amd64", "-t", image, str(context)], check=True)
 
 
-def scored_cases(dataset, duration, directory, evidence, fixtures, by_id):
+def scored_cases(dataset, duration, directory, evidence, fixtures, by_id, skipped=()):
     rows = {}
     for path in sorted((directory / "commits").glob("*.patch")):
         reasons = set()
-        picked = select_patch(path.read_text(encoding="utf-8"), fixtures, evidence, by_id, reasons)
+        picked = select_patch(path.read_text(encoding="utf-8"), fixtures, evidence, by_id, reasons, skipped)
         workers = schedule(by_id.values() if picked is None else picked)
         failing = dataset[path.stem]["failing"]
         selected = {test for worker in workers for test in worker}
@@ -99,14 +99,14 @@ def audited_structural_labels(directory, tests, manifest):
     return labels
 
 
-def benchmark(image, directory, answers, tests, details, destination):
+def benchmark(image, directory, answers, tests, details, destination, output=OUTPUT):
     cpu_times = []
     expected = {commit: row["workers"] for commit, row in details.items()}
     previous = None
     score = scorer()
     for run in range(1, 4):
         stdout, cpu_us = run_mode("integrated", directory / "commits", image)
-        (OUTPUT / f"{destination}-{run}.jsonl").write_bytes(stdout)
+        (output / f"{destination}-{run}.jsonl").write_bytes(stdout)
         if previous is not None and previous != stdout:
             raise RuntimeError(f"Nondeterministic schedules for {destination}")
         actual = {r["commit"]: r["workers"] for r in map(json.loads, stdout.splitlines())}

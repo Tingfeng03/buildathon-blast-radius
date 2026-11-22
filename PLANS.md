@@ -1,6 +1,6 @@
 # Blast Radius development roadmap
 
-**Status.** Phase 6 passed local acceptance. The latest reported organizer score is 505.0 s with zero misses from Phase 5. The under-150-second organizer target still needs a scored run of the new candidate. See the [build log](harness/build-log.md).
+**Status.** Phase 7 passed local acceptance. The latest organizer result is 470.7 s with zero misses from Phase 6. The target is under 150 seconds including CPU with zero misses. See the [build log](harness/build-log.md).
 
 ## Architectural decisions
 
@@ -29,3 +29,5 @@ At each phase boundary, use the [development workflow](AGENTS.md) to agree on sc
 **Phase 05.** The precise selector scored 118.666 s including median CPU on the organizer sample and 125.382 s on the independent validation batch. The user reported an organizer score of 505.0 s, down from 858.7 s on the previous submission. Both submissions had zero missed commits. See the [Phase 05 build log](harness/build-log.md#phase-05--narrow-source-and-mixed-file-selections).
 
 **Phase 06.** Enclosing-callable coverage and mapped configuration or import dependencies replaced seven full-suite fallbacks across nine independent patches. Scheduled time across those patches fell from 308.627 s to 152.805 s, with zero misses. Public sample simulated time stayed at 117.408 s. See the [approved scope and acceptance checks](harness/build/phase-06-narrow-fallbacks.md).
+
+**Phase 07.** Narrowed selections for local sets, guarded statements, and selected definition changes. Across 16 independent patches, scheduled time fell from 349.301 s to 273.302 s with zero misses. Public sample simulated time was 117.408 s. See the [scope and acceptance checks](harness/build/phase-07-costly-selections.md).

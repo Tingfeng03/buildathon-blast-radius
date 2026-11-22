@@ -2,7 +2,9 @@
 
 import ast
 import gzip
+import importlib.util
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -151,10 +153,8 @@ def lazy_imports(tree, package, exports):
     return dependencies
 
 
-def import_dependents(base, trees, ids, lines, classes, direct_reads, source_reads):
+def import_dependents(trees, test_trees, ids, lines, classes, direct_reads, source_reads):
     """Join import dependencies with runtime use of lazily loaded dialect modules."""
-    test_trees = {path.relative_to(base).as_posix(): ast.parse(path.read_bytes())
-                  for path in sorted((base / "tests").rglob("*.py"))}
     package = "sqlglot.dialects"
     dialect_package = trees["sqlglot/dialects/__init__.py"]
     dialects = next(ast.literal_eval(stmt.value) for stmt in dialect_package.body
@@ -204,9 +204,66 @@ def import_dependents(base, trees, ids, lines, classes, direct_reads, source_rea
     return {
         path: all_importers[module] for module, path in paths.items()
         if (module in lazy_modules or module.startswith(("sqlglot.generators.", "sqlglot.parsers.",
-                                                         "sqlglot.typing.")))
+                                                         "sqlglot.typing.", "sqlglot.optimizer.")))
         and not path.endswith("/__init__.py") and all_importers[module]
     }
+
+
+def membership_readers(trees, test_trees, lines):
+    """Find local sets consumed only by attributed membership checks."""
+    exposed = set()
+    imports = defaultdict(set)
+    for path, tree in (trees | test_trees).items():
+        module = module_name(path)
+        package = module if path.endswith("/__init__.py") else module.rpartition(".")[0]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                exposed.add(node.attr)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                exposed.update(re.findall(r"\b[A-Z_][A-Z_0-9]*\b", node.value))
+            elif isinstance(node, ast.ImportFrom):
+                dependency = node.module or ""
+                if node.level:
+                    try:
+                        dependency = importlib.util.resolve_name("." * node.level + dependency, package)
+                    except ImportError:
+                        continue
+                imports[dependency].update(alias.name for alias in node.names)
+
+    result = defaultdict(dict)
+    for path, tree in trees.items():
+        if not path.startswith(("sqlglot/parsers/", "sqlglot/generators/")):
+            continue
+        imported = imports[module_name(path)]
+        if "*" in imported:
+            continue
+        nodes = list(ast.walk(tree))
+        ranges = [(fn.body[0].lineno, fn.end_lineno) for cls in tree.body
+                  if isinstance(cls, ast.ClassDef) and not (cls.decorator_list or cls.keywords)
+                  for fn in cls.body if isinstance(fn, ast.FunctionDef) and not fn.decorator_list
+                  and fn.body[0].lineno > fn.lineno]
+        coverage = lines.get(path, {})
+        for stmt in tree.body:
+            if not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Set)):
+                continue
+            target = stmt.targets[0]
+            name = target.id
+            if not name.isupper() or name in exposed or name in imported:
+                continue
+            references = {node for node in nodes if isinstance(node, ast.Name) and node.id == name}
+            comparisons = [node for node in nodes if isinstance(node, ast.Compare)
+                           and len(node.ops) == 1 and isinstance(node.ops[0], (ast.In, ast.NotIn))
+                           and node.comparators[0] in references
+                           and any(start <= node.lineno <= end for start, end in ranges)]
+            if not comparisons or references != {target, *(node.comparators[0] for node in comparisons)}:
+                continue
+            if any(not coverage.get(node.lineno) for node in comparisons):
+                continue
+            readers = set().union(*(coverage[node.lineno] for node in comparisons))
+            if "" not in readers:
+                result[path][name] = readers
+    return result
 
 
 def enum_references(trees):
@@ -238,10 +295,13 @@ def make_map(base, ids, lines, pool_tests, classes, sites, reads):
     sources = {p.relative_to(base).as_posix(): p.read_text(encoding="utf-8")
                for p in sorted((base / "sqlglot").rglob("*.py"))}
     trees = {p: ast.parse(src) for p, src in sources.items()}
+    test_trees = {path.relative_to(base).as_posix(): ast.parse(path.read_bytes())
+                  for path in sorted((base / "tests").rglob("*.py"))}
     attributes = attribute_reads(trees, lines)
     factories = closure_factories(trees)
     static_reads = direct_class_reads(base, ids, classes)
-    importers = import_dependents(base, trees, ids, lines, classes, static_reads, reads)
+    importers = import_dependents(trees, test_trees, ids, lines, classes, static_reads, reads)
+    memberships = membership_readers(trees, test_trees, lines)
     enums = enum_references(trees)
     # Queue serialization can execute between pytest contexts. Link the modules imported
     # by pickle hooks to every test that submitted a task in either pool.
@@ -265,12 +325,15 @@ def make_map(base, ids, lines, pool_tests, classes, sites, reads):
         if module_name(path) in pickle_modules:
             info["pool"] = group(pool_tests)
         if path in importers:
-            info["importers"] = group(importers[path])
+            key = "binding_importers" if path.startswith("sqlglot/optimizer/") else "importers"
+            info[key] = group(importers[path])
         if path in enums:
             info["enums"] = enums[path]
+        if path in memberships:
+            info["membership"] = {name: group(tests) for name, tests in sorted(memberships[path].items())}
         files[path] = info
     return {
-        "format": 1, "structural": True, "base_commit": BASE, "ids": ids, "files": files,
+        "format": 1, "structural": True, "binding_edits": True, "base_commit": BASE, "ids": ids, "files": files,
         "classes": {k: group(v) for k, v in sorted(classes.items())},
         "attributes": {k: group(v) for k, v in sorted(attributes.items())},
         "class_reads": {k: group(v) for k, v in sorted(static_reads.items())},

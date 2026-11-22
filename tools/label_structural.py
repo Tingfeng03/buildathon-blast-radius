@@ -45,9 +45,9 @@ def patch_bytes(base, case):
     return (f"diff --git a/{path} b/{path}\n" + "".join(diff)).encode()
 
 
-def prepare(base, output):
+def prepare(base, output, cases=CASES):
     manifest = {}
-    for case in CASES:
+    for case in cases:
         directory = output / case.split("-")[0] / "commits"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{case}.patch"
@@ -59,16 +59,18 @@ def prepare(base, output):
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def main():
+def main(cohorts=CASES):
     action, base, sample, output, *cases = sys.argv[1:]
     base, sample, output = map(Path, (base, sample, output))
-    validation.CASES.update(CASES)
+    validation.CASES.update(cohorts)
     if action == "prepare":
-        prepare(base, output)
+        prepare(base, output, cohorts)
         return
     if action != "label" or not cases:
         raise SystemExit("Use prepare or label with one or more frozen cases")
     for case in cases:
+        if case not in cohorts:
+            raise ValueError(f"Unknown case in this cohort: {case}")
         directory = output / case.split("-")[0]
         if (directory / "commits" / f"{case}.patch").read_bytes() != patch_bytes(base, case):
             raise ValueError(f"Frozen patch changed: {case}")

@@ -101,7 +101,7 @@ def select(patch, fixtures, by_id):
     return [by_id[reader] for reader in sorted(readers)]
 
 
-def select_patch(patch, fixtures, source_map, by_id, reasons=None):
+def select_patch(patch, fixtures, source_map, by_id, reasons=None, skipped=()):
     if source_map is not None and source_map.get("format") == 1:
         readers = set()
         seen = set()
@@ -118,7 +118,7 @@ def select_patch(patch, fixtures, source_map, by_id, reasons=None):
                         reasons.add("fixture readers")
                 else:
                     readers.update(source_readers(part, source_map, reasons))
-            return [by_id[reader] for reader in sorted(readers)]
+            return [by_id[reader] for reader in sorted(readers.difference(skipped))]
         except (KeyError, IndexError, TypeError, ValueError, SyntaxError, OverflowError, RecursionError):
             return None
     try:
@@ -138,10 +138,12 @@ def main():
     args = parser.parse_args()
     data = Path("/data")
     # Load the complete catalogue.
-    tests = json.loads((data / "tests.json").read_text(encoding="utf-8"))["tests"]
+    catalogue = json.loads((data / "tests.json").read_text(encoding="utf-8"))
+    tests = catalogue["tests"]
     for test in tests:
         test["ms"] = int((Decimal(str(test["seconds"])) * 1000).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     by_id = {test["id"]: test for test in tests}
+    skipped = frozenset(catalogue.get("skipped", ())).difference(by_id)
     fixtures = {} if args.all_tests else load_map(Path("/app/fixture_map.json"), tests)
     source_map = None
     if not (args.all_tests or args.fixture_only):
@@ -151,7 +153,7 @@ def main():
     for patch in sorted((data / "commits").glob("*.patch")):
         try:
             selected = None if args.all_tests else select_patch(
-                patch.read_text(encoding="utf-8"), fixtures, source_map, by_id,
+                patch.read_text(encoding="utf-8"), fixtures, source_map, by_id, skipped=skipped,
             )
         except (OSError, UnicodeError):
             selected = None
