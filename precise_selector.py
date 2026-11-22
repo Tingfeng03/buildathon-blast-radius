@@ -5,6 +5,7 @@ import gzip
 import json
 import re
 import zlib
+from difflib import SequenceMatcher
 from functools import lru_cache
 
 from source_selector import patched_files
@@ -35,7 +36,7 @@ def load_precise_map(path, base, by_id):
             if not (isinstance(info, dict) and isinstance(info["source"], str)
                     and isinstance(info["lines"], dict) and valid_index(info["readers"])
                     and all(valid_index(i) for i in info["lines"].values())
-                    and ("pool" not in info or valid_index(info["pool"]))):
+                    and all(valid_index(info[key]) for key in ("pool", "importers") if key in info)):
                 return None
         return evidence
     except (KeyError, TypeError, OSError, EOFError, ValueError, RecursionError, zlib.error):
@@ -184,6 +185,35 @@ def body_readers(fn, new, path, info, evidence):
     return readers
 
 
+def callable_readers(fn, new, info, evidence):
+    """A modified body can affect any caller, including a call that skips the edited lines."""
+    def generator_body(node):
+        pending = list(node.body)
+        while pending:
+            stmt = pending.pop()
+            if isinstance(stmt, (ast.Yield, ast.YieldFrom)):
+                return True
+            if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                pending.extend(ast.iter_child_nodes(stmt))
+        return False
+
+    if ast.get_docstring(fn, clean=False) != ast.get_docstring(new, clean=False) or (
+        generator_body(fn) != generator_body(new)
+    ):
+        raise Unknown("Callable metadata changed")
+    first = fn.body[0].lineno
+    if first <= fn.lineno:
+        raise Unknown("Cannot separate a single-line body from definition-time evaluation")
+    readers = set()
+    for line in range(first, fn.end_lineno + 1):
+        readers.update(point(info, evidence, line))
+    if not readers or -1 in readers:
+        raise Unknown("Callable has incomplete execution attribution")
+    if "pool" in info:
+        readers.update(groups(evidence, info["pool"]))
+    return readers
+
+
 def supported_value(a, b, info):
     if isinstance(a, ast.Call):
         if not (isinstance(a.func, ast.Name) and a.func.id in info.get("factories", ())):
@@ -243,7 +273,90 @@ def class_setting(old, new, owner, info, evidence):
     return named | (instances if -1 in direct else direct)
 
 
-def definitions(old, new, path, info, evidence, owner=None):
+def module_readers(info, evidence):
+    if "importers" not in info:
+        raise Unknown("No bounded import evidence for module")
+    return groups(evidence, info["importers"])
+
+
+def assignment_name(old, new):
+    if type(old) is not type(new) or not isinstance(old, (ast.Assign, ast.AnnAssign)):
+        raise Unknown
+    if not all(same(getattr(old, f), getattr(new, f)) for f in old._fields if f != "value"):
+        raise Unknown
+    targets = old.targets if isinstance(old, ast.Assign) else [old.target]
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name) or not targets[0].id.isupper():
+        raise Unknown
+    return targets[0].id
+
+
+def enum_member(value, info):
+    if isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+        name = value.value.id
+        if value.attr in info.get("enums", {}).get(name, ()):
+            return name
+    return None
+
+
+def passive_data(node):
+    """Recognize data expressions without calls, comprehensions, or operators with side effects."""
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Attribute):
+        return isinstance(node.value, ast.Name) or passive_data(node.value)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(passive_data(value) for value in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(key is not None and passive_data(key) and passive_data(value)
+                   for key, value in zip(node.keys, node.values))
+    return (isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub))
+            and isinstance(node.operand, ast.Constant) and type(node.operand.value) in (int, float))
+
+
+def changed_sequences(old, new, key):
+    matcher = SequenceMatcher(None, list(map(key, old)), list(map(key, new)), autojunk=False)
+    return [(old[a:b], new[c:d]) for tag, a, b, c, d in matcher.get_opcodes() if tag != "equal"]
+
+
+def data_edit(old, new):
+    if isinstance(old, ast.Dict) and isinstance(new, ast.Dict):
+        entries = changed_sequences(list(zip(old.keys, old.values)), list(zip(new.keys, new.values)),
+                                    lambda item: tuple(ast.dump(n) if n is not None else "" for n in item))
+        return all(key is not None and passive_data(key) and passive_data(value)
+                   for before, after in entries for key, value in before + after)
+    return passive_data(old) and passive_data(new)
+
+
+def configuration_readers(old, new, owner, info, evidence):
+    name = assignment_name(old, new)
+    enum = enum_member(old.value, info)
+    if owner and enum and enum_member(new.value, info) == enum:
+        observed = evidence["classes"].get(owner)
+        if observed is not None:
+            instances = groups(evidence, observed) - {-1}
+            named = evidence["class_reads"].get(f"{owner}.{name}")
+            if instances:
+                return instances | (groups(evidence, named) if named is not None else set())
+    if not data_edit(old.value, new.value):
+        raise Unknown("Configuration edit may evaluate executable code")
+    return module_readers(info, evidence)
+
+
+def import_edit(old, new):
+    def permitted(node):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return not (isinstance(node, ast.ImportFrom) and node.module == "__future__")
+        if not isinstance(node, ast.Raise) or node.cause is not None:
+            return False
+        exc = node.exc
+        return (isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name)
+                and exc.func.id in ("ImportError", "ModuleNotFoundError")
+                and not exc.keywords and all(isinstance(arg, ast.Constant) for arg in exc.args))
+    return all(permitted(node) for before, after in changed_sequences(old, new, ast.dump)
+               for node in before + after)
+
+
+def definitions(old, new, path, info, evidence, reasons, owner=None):
     if len(old) != len(new):
         raise Unknown
     readers = set()
@@ -255,13 +368,30 @@ def definitions(old, new, path, info, evidence, owner=None):
                 raise Unknown
             if isinstance(a, ast.ClassDef):
                 module = path.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
-                readers.update(definitions(a.body, b.body, path, info, evidence, f"{owner or module}.{a.name}"))
+                readers.update(definitions(a.body, b.body, path, info, evidence, reasons,
+                                           f"{owner or module}.{a.name}"))
             else:
-                readers.update(body_readers(a, b, path, info, evidence))
-        elif owner:
-            readers.update(class_setting(a, b, owner, info, evidence))
+                try:
+                    readers.update(body_readers(a, b, path, info, evidence))
+                    reasons.add("precise source coverage")
+                except Unknown:
+                    if not evidence.get("structural"):
+                        raise
+                    readers.update(callable_readers(a, b, info, evidence))
+                    reasons.add("enclosing callable coverage")
         else:
-            raise Unknown
+            if owner:
+                try:
+                    readers.update(class_setting(a, b, owner, info, evidence))
+                    reasons.add("precise class setting")
+                    continue
+                except Unknown:
+                    if not evidence.get("structural"):
+                        raise
+            if not evidence.get("structural"):
+                raise Unknown
+            readers.update(configuration_readers(a, b, owner, info, evidence))
+            reasons.add("configuration dependencies")
     return readers
 
 
@@ -270,8 +400,10 @@ def base_tree(path, source):
     return ast.parse(source, path, type_comments=True)
 
 
-def source_readers(patch, evidence):
+def source_readers(patch, evidence, reasons=None):
     readers = set()
+    if reasons is None:
+        reasons = set()
     for path, info, source in patched_files(patch, evidence["files"], include_source=True):
         original = info["source"]
         # File encodings can change import behavior even when decoding both strings
@@ -284,7 +416,15 @@ def source_readers(patch, evidence):
         if [node.tag for node in old.type_ignores] != [node.tag for node in new.type_ignores]:
             raise Unknown
         readers.update(groups(evidence, info["readers"]))
-        readers.update(definitions(old.body, new.body, path, info, evidence))
+        file_reasons = set()
+        try:
+            readers.update(definitions(old.body, new.body, path, info, evidence, file_reasons))
+        except Unknown:
+            if not evidence.get("structural") or not import_edit(old.body, new.body):
+                raise
+            readers.update(module_readers(info, evidence))
+            file_reasons = {"import dependencies"}
+        reasons.update(file_reasons or {"source-only change"})
     if -1 in readers:
         raise Unknown
     return {evidence["ids"][i] for i in readers}

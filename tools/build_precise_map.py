@@ -8,11 +8,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from phase02.evidence import attribute_reads, merge, module_name, read_traces
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from selector import BASE
+from tools.phase02.evidence import attribute_reads, import_edges, merge, module_name, read_traces
 
 
 def read(path):
@@ -118,6 +117,123 @@ def profile_data(profile):
     return classes, sites, reads
 
 
+def lazy_imports(tree, package, exports):
+    """Resolve the dialect package's public imports and attribute accesses."""
+    root, _, child = package.partition(".")
+    aliases, roots, dependencies = set(), set(), set()
+    nodes = list(ast.walk(tree))
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                if item.name == package and item.asname:
+                    aliases.add(item.asname)
+                elif item.name == root or item.name.startswith(root + "."):
+                    roots.add(item.asname or root)
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            if node.module == package:
+                dependencies.update(exports[item.name] for item in node.names if item.name in exports)
+            elif node.module == root:
+                aliases.update(item.asname or item.name for item in node.names if item.name == child)
+
+    def dialect_package(node):
+        return (isinstance(node, ast.Name) and node.id in aliases or
+                isinstance(node, ast.Attribute) and node.attr == child
+                and isinstance(node.value, ast.Name) and node.value.id in roots)
+
+    for node in nodes:
+        if isinstance(node, ast.Attribute) and node.attr in exports and dialect_package(node.value):
+            dependencies.add(exports[node.attr])
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+              and node.func.id == "getattr" and len(node.args) >= 2
+              and dialect_package(node.args[0]) and isinstance(node.args[1], ast.Constant)
+              and isinstance(node.args[1].value, str) and node.args[1].value in exports):
+            dependencies.add(exports[node.args[1].value])
+    return dependencies
+
+
+def import_dependents(base, trees, ids, lines, classes, direct_reads, source_reads):
+    """Join import dependencies with runtime use of lazily loaded dialect modules."""
+    test_trees = {path.relative_to(base).as_posix(): ast.parse(path.read_bytes())
+                  for path in sorted((base / "tests").rglob("*.py"))}
+    package = "sqlglot.dialects"
+    dialect_package = trees["sqlglot/dialects/__init__.py"]
+    dialects = next(ast.literal_eval(stmt.value) for stmt in dialect_package.body
+                    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name) and stmt.targets[0].id == "DIALECTS")
+    lazy_exports = {name: f"{package}.{name.lower()}" for name in dialects}
+    lazy_modules = set(lazy_exports.values())
+    paths = {module_name(path): path for path in trees}
+    all_trees = trees | test_trees
+    known = {module_name(path) for path in all_trees}
+    graph = {}
+    for path, tree in all_trees.items():
+        graph[module_name(path)] = import_edges(path, tree, known) | lazy_imports(tree, package, lazy_exports)
+
+    users = defaultdict(set)
+    for node_id in ids:
+        users[module_name(node_id.split("::", 1)[0])].add(node_id)
+    for module, path in paths.items():
+        users[module].update(source_reads.get(path, ()))
+        for readers in lines.get(path, {}).values():
+            users[module].update(readers)
+        for name, readers in classes.items():
+            if name.startswith(module + "."):
+                users[module].update(readers)
+        for name, readers in direct_reads.items():
+            if name.startswith(module + "."):
+                users[module].update(readers)
+        users[module].discard("")
+
+    # Even when a dialect is already cached, accessing the complete registry can
+    # fail after any eager dependency of a dialect breaks at import.
+    registry_users = direct_reads.get("sqlglot.dialects.dialect.Dialect.classes", set())
+    for module in lazy_modules:
+        users[module].update(registry_users)
+    all_importers = defaultdict(set)
+    for module, readers in users.items():
+        if not readers:
+            continue
+        pending, visited = [module], set()
+        while pending:
+            dependency = pending.pop()
+            if dependency in visited:
+                continue
+            visited.add(dependency)
+            all_importers[dependency].update(readers)
+            pending.extend(graph.get(dependency, set()) - visited)
+    return {
+        path: all_importers[module] for module, path in paths.items()
+        if (module in lazy_modules or module.startswith(("sqlglot.generators.", "sqlglot.parsers.",
+                                                         "sqlglot.typing.")))
+        and not path.endswith("/__init__.py") and all_importers[module]
+    }
+
+
+def enum_references(trees):
+    """Find direct imports of pinned AutoName enums and their member names."""
+    enums = {}
+    for path, tree in trees.items():
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef) or not any(
+                isinstance(base, ast.Name) and base.id == "AutoName" for base in node.bases
+            ):
+                continue
+            enums[module_name(path), node.name] = sorted({
+                stmt.targets[0].id for stmt in node.body
+                if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name) and stmt.targets[0].id.isupper()
+            })
+    references = defaultdict(dict)
+    for path, tree in trees.items():
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and not node.level:
+                for alias in node.names:
+                    members = enums.get((node.module, alias.name))
+                    if members:
+                        references[path][alias.asname or alias.name] = members
+    return references
+
+
 def make_map(base, ids, lines, pool_tests, classes, sites, reads):
     sources = {p.relative_to(base).as_posix(): p.read_text(encoding="utf-8")
                for p in sorted((base / "sqlglot").rglob("*.py"))}
@@ -125,6 +241,8 @@ def make_map(base, ids, lines, pool_tests, classes, sites, reads):
     attributes = attribute_reads(trees, lines)
     factories = closure_factories(trees)
     static_reads = direct_class_reads(base, ids, classes)
+    importers = import_dependents(base, trees, ids, lines, classes, static_reads, reads)
+    enums = enum_references(trees)
     # Queue serialization can execute between pytest contexts. Link the modules imported
     # by pickle hooks to every test that submitted a task in either pool.
     pickle_modules = set()
@@ -146,9 +264,13 @@ def make_map(base, ids, lines, pool_tests, classes, sites, reads):
                 "readers": group(reads[path]), "factories": sorted(factories[path])}
         if module_name(path) in pickle_modules:
             info["pool"] = group(pool_tests)
+        if path in importers:
+            info["importers"] = group(importers[path])
+        if path in enums:
+            info["enums"] = enums[path]
         files[path] = info
     return {
-        "format": 1, "base_commit": BASE, "ids": ids, "files": files,
+        "format": 1, "structural": True, "base_commit": BASE, "ids": ids, "files": files,
         "classes": {k: group(v) for k, v in sorted(classes.items())},
         "attributes": {k: group(v) for k, v in sorted(attributes.items())},
         "class_reads": {k: group(v) for k, v in sorted(static_reads.items())},

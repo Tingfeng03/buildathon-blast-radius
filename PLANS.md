@@ -1,6 +1,6 @@
 # Blast Radius development roadmap
 
-**Status:** Phases 01 through 03 completed and verified. Phase 04 passed local verification for `b3481b4e2ef2c05e588c45a314349526fde4406a`. Submission readiness is pending anonymous access to that commit. See the [build log](harness/build-log.md).
+**Status.** Phase 6 passed local acceptance. The latest reported organizer score is 505.0 s with zero misses from Phase 5. The under-150-second organizer target still needs a scored run of the new candidate. See the [build log](harness/build-log.md).
 
 ## Architectural decisions
 
@@ -26,4 +26,6 @@
 
 At each phase boundary, use the [development workflow](AGENTS.md) to agree on scope and acceptance checks, record observed evidence, and review the outcome before advancing.
 
-**Phase 05.** Local acceptance passed. The precise selector scored 118.666 s including median CPU on the organizer sample and 125.382 s on the independent validation batch, with zero misses in all six measured runs. The organizer reported 858.131 simulated seconds and zero misses for the previous submission. The new candidate needs an organizer result to verify the under-150-second goal. See the [Phase 05 build log](harness/build-log.md#phase-05--narrow-source-and-mixed-file-selections).
+**Phase 05.** The precise selector scored 118.666 s including median CPU on the organizer sample and 125.382 s on the independent validation batch. The user reported an organizer score of 505.0 s, down from 858.7 s on the previous submission. Both submissions had zero missed commits. See the [Phase 05 build log](harness/build-log.md#phase-05--narrow-source-and-mixed-file-selections).
+
+**Phase 06.** Enclosing-callable coverage and mapped configuration or import dependencies replaced seven full-suite fallbacks across nine independent patches. Scheduled time across those patches fell from 308.627 s to 152.805 s, with zero misses. Public sample simulated time stayed at 117.408 s. See the [approved scope and acceptance checks](harness/build/phase-06-narrow-fallbacks.md).

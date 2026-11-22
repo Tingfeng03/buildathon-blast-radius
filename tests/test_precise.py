@@ -17,14 +17,17 @@ class PreciseTests(unittest.TestCase):
             before.splitlines(True), after.splitlines(True), "a/" + path, "b/" + path,
         ))
 
-    def select(self, before, after, extra="", readers=0, lines=None):
+    def select(self, before, after, extra="", readers=0, lines=None, structural=False, importers=None):
         ids = ["source", "fixture", "reads-text"]
         evidence = {
-            "format": 1, "ids": ids, "groups": [[], [0], [2], [-1, 0]], "sites": {},
+            "format": 1, "structural": structural, "ids": ids,
+            "groups": [[], [0], [2], [-1, 0]], "sites": {},
             "files": {self.path: {
                 "source": before, "readers": readers, "lines": lines or {"2": 1},
             }},
         }
+        if importers is not None:
+            evidence["files"][self.path]["importers"] = importers
         return select_patch(self.patch(before, after) + extra, {self.fixture: ["fixture"]},
                             evidence, {i: i for i in ids})
 
@@ -80,3 +83,25 @@ class PreciseTests(unittest.TestCase):
     def test_edit_to_closure_body_uses_executions_of_that_body(self):
         old = "def factory():\n    def inner(x):\n        return x + 1\n    return inner\n"
         self.assertEqual(self.select(old, old.replace("+ 1", "+ 2"), lines={"2": 3, "3": 1}), ["source"])
+
+    def test_structural_edit_includes_callers_outside_the_edited_branch(self):
+        old = "def run(value):\n    if value:\n        return 1\n    return 0\n"
+        new = old.replace("return 1", "result = 2\n        return result")
+        self.assertEqual(self.select(old, new, structural=True, lines={"3": 1, "4": 2}),
+                         ["reads-text", "source"])
+        self.assertIsNone(self.select(old, new, structural=True, lines={"3": 1, "4": 3}))
+        self.assertIsNone(self.select(old, old.replace("return 1", "yield 1"), structural=True,
+                                      lines={"3": 1, "4": 2}))
+
+    def test_import_changes_require_bounded_module_evidence(self):
+        old = "def run():\n    return 1\n"
+        new = 'raise ImportError("module unavailable")\n' + old
+        self.assertIsNone(self.select(old, new, structural=True))
+        self.assertEqual(self.select(old, new, structural=True, importers=2), ["reads-text"])
+        self.assertIsNone(self.select(old, "do_something()\n" + old, structural=True, importers=2))
+
+    def test_module_configuration_has_to_be_data(self):
+        old = "SETTINGS = {'units': (1, 2, 3)}\n"
+        new = old.replace("1, 2, 3", "1, 2")
+        self.assertEqual(self.select(old, new, structural=True, importers=2), ["reads-text"])
+        self.assertIsNone(self.select(old, "SETTINGS = run()\n", structural=True, importers=2))

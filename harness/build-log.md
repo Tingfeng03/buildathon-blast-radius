@@ -100,4 +100,31 @@ The candidate verifies Python hunks against pinned text and compares syntax tree
 - `python -B -m unittest discover -s tests -q` passed 16 tests. `git diff --check` passed.
 - `python -B harness/run_sample.py` scored the packaged Linux AMD64 default entry point at 117.408 simulated seconds with zero misses. `python -B harness/benchmark_phase05.py` passed three runs per dataset under the competition runtime limits. Sample CPU was 1.257515, 1.371700 and 1.201638 s. Validation CPU was 0.824073, 0.871034 and 0.840481 s. Raw schedules are under `.investigation/phase05/`.
 - The initial class profiler collided with sqlglot's `instance` keyword. With a positional-only receiver, the full profile passed 1,620 tests and 25,440 subtests with one skip. An executor task can return before running a sqlglot line. The corrected executor collector verifies task entry separately from line coverage and passed 60 tests and 426 subtests.
-- The packaged map is 1,387,677 bytes. `python -B tools/build_precise_map.py` regenerated the same SHA-256 from the saved traces. All three schedules were byte-identical within each dataset. See the [walkthrough and reproduction commands](context/phase-05-precise-selection-context.md). Local acceptance passed. The organizer score for this candidate remains pending.
+- The packaged map is 1,387,677 bytes. `python -B tools/build_precise_map.py` regenerated the same SHA-256 from the saved traces. All three schedules were byte-identical within each dataset. See the [walkthrough and reproduction commands](context/phase-05-precise-selection-context.md). Local acceptance passed.
+
+### Organizer follow-up
+
+The user reported 503.591 simulated seconds on all three runs, with CPU of 1.39, 1.43 and 1.40 seconds and zero missed commits each time. The median total rounds to **505.0 s**, down from **858.7 s** on the previous submission. The Phase 05 implementation is at `b9e503cc8477d4df071ef8fe9902e65c423ba2a7` in the workspace. The organizer feedback gives aggregate cost only, so the patches and selections responsible for the remaining cost are unknown.
+
+Rechecking the saved Phase 05 schedules against the maximum of the longest test and the average worker load, plus worker overhead, gives zero scheduling headroom for the selected tests on either labeled batch. On independent validation, the import change and shared-setting change each schedule the full suite for 36.817 seconds. Their labeled failing sets have lower bounds of 12.896 and 6.282 seconds respectively. These two cases provide a local way to measure the cost of the fallback. The two most expensive sample schedules already attain the lower bounds of their failing sets.
+
+## Phase 06 · Narrow costly fallbacks
+
+Phase 6 passed local acceptance. Structural edits to functions with unchanged declarations can use observed callers. Supported configuration edits use class evidence or module dependencies. Import-sensitive changes in mapped dialect modules use the pinned import graph and covered uses. An attribution gap still selects the full suite. Code review found that a cached lazy package attribute may bypass the module trace. The final map adds those static references, and the candidate was frozen before the holdout labels were opened for scoring.
+
+| Batch | Phase 5 simulated s | Phase 6 simulated s | Median CPU s, Phase 5 → 6 | Median total s, Phase 5 → 6 | Failing-set lower bound s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Public sample, 30 patches | 117.408 | 117.408 | 1.641 → 1.711 | 119.049 → 119.119 | 94.351 |
+| Previous validation, 4 patches | 124.542 | 91.262 | 1.233 → 0.952 | 125.775 → 92.214 | 68.099 |
+| Structural development, 2 patches | 73.634 | 14.529 | 0.804 → 0.869 | 74.438 → 15.398 | 3.129 |
+| Structural holdout, 3 patches | 110.451 | 47.014 | 0.896 → 0.838 | 111.347 → 47.852 | 16.958 |
+
+Both images had zero missed commits on every run. Phase 5 used the full suite on seven of the nine independent patches. The candidate resolved all seven. The remaining excess includes the holdout optimizer edit, which costs 25.454 s with enclosing-callable coverage against a 4.232 s lower bound on its failing set.
+
+- `python -B -m unittest discover -s tests -q` passed 20 tests. `git diff --check` passed.
+- The pinned Linux AMD64 full suite accounted for all 1,620 numbered tests on each of the five new patches. The development patches had 3 and 0 failures. The holdout patches had 1 nested-edit failure, 1 module-setting failure, and 117 import-related failures.
+- `python -B harness/run_sample.py` and its `--all-tests` mode gave 117.408 s and 1104.510 s respectively, with zero misses. The existing three-run smoke benchmark passed on both the public sample and previous validation while Phase 6 was being developed.
+- `python -B harness/benchmark_phase06.py --freeze` checked the runtime fingerprints. `python -B harness/benchmark_phase06.py` rebuilt both Linux images, audited label evidence, and passed all 24 scored runs. Schedules matched across the three repeats in each comparison and agreed with host diagnostics. One Phase 6 sample run used 3.276 CPU seconds, while the other two used 1.711 and 1.433.
+- `python -B tools/build_precise_map.py` regenerated the final 1,395,190-byte map with SHA-256 `b0454e196c115064baad933fe2ccb144cc280fe85f8854634ec741dea4152143`. See the [walkthrough and reproduction commands](context/phase-06-narrow-fallbacks-context.md).
+
+The organizer score for this candidate is pending.

@@ -101,7 +101,7 @@ def select(patch, fixtures, by_id):
     return [by_id[reader] for reader in sorted(readers)]
 
 
-def select_patch(patch, fixtures, source_map, by_id):
+def select_patch(patch, fixtures, source_map, by_id, reasons=None):
     if source_map is not None and source_map.get("format") == 1:
         readers = set()
         seen = set()
@@ -114,8 +114,10 @@ def select_patch(patch, fixtures, source_map, by_id):
                 paths = changed_fixtures(part)
                 if paths:
                     readers.update(fixtures[paths[0]])
+                    if reasons is not None:
+                        reasons.add("fixture readers")
                 else:
-                    readers.update(source_readers(part, source_map))
+                    readers.update(source_readers(part, source_map, reasons))
             return [by_id[reader] for reader in sorted(readers)]
         except (KeyError, IndexError, TypeError, ValueError, SyntaxError, OverflowError, RecursionError):
             return None
